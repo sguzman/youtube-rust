@@ -11,20 +11,25 @@ use log::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::Path;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 struct Cache {
     data: HashMap<String, String>, // Adjust types according to your needs
 }
 
+const CACHE: &str = ".cache/data.json";
+
 // Make an HTTP request
 use reqwest::blocking::Client;
 
-fn get(url: &str) -> String {
+fn get(url: String) -> String {
+    let url: String = format!("https://www.youtube.com/channel/{url}/videos");
     info!("GET {}", url);
     let client = Client::new();
-    let res = client.get(url).send().unwrap();
+    let res = client.get(url.clone()).send().unwrap();
 
     debug!("Status: {}", res.status());
     res.text().expect(&std::format!("Failed to get {}", url))
@@ -95,9 +100,10 @@ fn get_json(text: String) -> String {
     }
 }
 
-fn op() {
-    const URL: &str = "https://www.youtube.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw/videos";
-    let html = get(URL);
+fn op(cache: &mut Cache) {
+    let arg: String = "UC-lHJZR3Gqxm24_Vd_AJ5Yw".to_string();
+    // Cache get html
+    let html = cache_logic(arg, cache, |url| get(url));
     let body = parser(html);
     let scripts = get_scripts(&body);
     let element = get_data(&scripts);
@@ -106,7 +112,7 @@ fn op() {
 }
 
 // Init systems
-fn init() {
+fn init() -> Cache {
     rayon::ThreadPoolBuilder::new()
         .num_threads(32)
         .build_global()
@@ -127,10 +133,61 @@ fn init() {
         .init();
 
     log::info!("Starting");
+    Cache::load()
 }
 
-fn main() {
-    init();
-    op();
+impl Cache {
+    fn load() -> Cache {
+        let path = Path::new(CACHE);
+        if path.exists() {
+            let mut file = File::open(path).unwrap();
+
+            let cache: Cache =
+                serde_json::from_reader(&mut file).expect("Failed to deserialize cache");
+
+            // Log number of keys in cache
+            log::info!("Loaded {} keys from cache", cache.data.len());
+
+            cache
+        } else {
+            Cache {
+                data: HashMap::new(),
+            }
+        }
+    }
+
+    fn save(&self) {
+        let path = Path::new(CACHE);
+        let contents = serde_json::to_string(&self).unwrap();
+        let mut file = File::create(path).unwrap();
+        file.write_all(contents.as_bytes())
+            .expect("Failed to write cache to file")
+    }
+}
+
+fn cache_logic<F, Arg, Res>(arg: Arg, cache: &mut Cache, compute: F) -> Res
+where
+    F: FnOnce(Arg) -> Res,
+    Arg: std::hash::Hash + Eq + Clone + serde::Serialize + for<'de> serde::Deserialize<'de>,
+    Res: Clone + serde::Serialize + for<'de> serde::Deserialize<'de>,
+{
+    let key = serde_json::to_string(&arg).expect("Failed to serialize key");
+
+    if let Some(result) = cache.data.get(&key) {
+        serde_json::from_str(result).expect("Failed to deserialize value")
+    } else {
+        let result = compute(arg.clone());
+        let serialized_result = serde_json::to_string(&result).expect("Failed to serialize value");
+        cache.data.insert(key, serialized_result);
+        result
+    }
+}
+
+fn main() -> io::Result<()> {
+    let mut cache = init();
+    op(&mut cache);
+    cache.save();
     log::info!("end");
+
+    Ok(())
 }
