@@ -1,15 +1,25 @@
+extern crate rayon;
+extern crate reqwest;
+extern crate scraper;
+extern crate serde;
+extern crate serde_json;
+
 use chrono::Local;
 use env_logger::Builder;
 use log::LevelFilter;
 use log::{debug, info, warn};
 use scraper::{ElementRef, Html, Selector};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Write;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+struct Cache {
+    data: HashMap<String, String>, // Adjust types according to your needs
+}
 
 // Make an HTTP request
 use reqwest::blocking::Client;
-
-// Use serde_json to parse JSON
-use youtube_serde::Youtube;
 
 fn get(url: &str) -> String {
     info!("GET {}", url);
@@ -85,15 +95,6 @@ fn get_json(text: String) -> String {
     }
 }
 
-// Use serde_json to parse JSON
-fn parse_json(json: String) -> Youtube {
-    info!("Parsing JSON");
-    let v: Youtube = serde_json::from_str(&json).unwrap();
-    info!("Parsed JSON");
-
-    v
-}
-
 fn op() {
     const URL: &str = "https://www.youtube.com/channel/UC-lHJZR3Gqxm24_Vd_AJ5Yw/videos";
     let html = get(URL);
@@ -102,10 +103,10 @@ fn op() {
     let element = get_data(&scripts);
     let text = get_text(element);
     let json = get_json(text);
-    let v = parse_json(json);
 }
 
-fn main() {
+// Init systems
+fn init() {
     rayon::ThreadPoolBuilder::new()
         .num_threads(32)
         .build_global()
@@ -124,7 +125,12 @@ fn main() {
         })
         .filter(None, LevelFilter::Info)
         .init();
+
     log::info!("Starting");
+}
+
+fn main() {
+    init();
     op();
     log::info!("end");
 }
